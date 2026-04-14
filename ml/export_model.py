@@ -1,18 +1,25 @@
 import joblib
 from sklearn.tree import _tree
+import os
 
-# FIXED PATH
-clf = joblib.load('artifact.pkl')
+# --- DYNAMIC PATHS ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_FILENAME = os.path.join(BASE_DIR, 'artifact.pkl')
+OUTPUT_FILE = os.path.join(BASE_DIR, "../engine/predictor.go")
+
+# Load the model using the absolute path
+clf = joblib.load(MODEL_FILENAME)
 
 def tree_to_go(tree, feature_names):
-    # ... (Keep your exact recurse logic here, it was already perfectly written for Go!) ...
-    pass # (Copy your previous recurse function here)
+    # ... (Keep your exact recurse logic here) ...
+    pass 
 
-# FIXED FEATURES: Updated to match the new dataset and Go engine
 go_code = tree_to_go(clf, ["Is_Global_TLD", "Is_ID_TLD", "Subdomain_Depth"])
 
-# FIXED OUTPUT PATH
-with open("../engine/predictor.go", "w") as f:
+# Save the Go code using the absolute path
+with open(OUTPUT_FILE, "w") as f:
     f.write(go_code)
 
-print("[+] Successfully exported to ../engine/predictor.go!")
+print(f"[+] Successfully exported to {OUTPUT_FILE}!")
+
+#git commit -m "Refactor: Use dynamic paths for model export and prediction"
