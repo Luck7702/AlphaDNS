@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+
+dns_env/
+venv/
+.env
+
+*.csv
+*.pkl
+*.png
+
+
+!sample.csv
+
+predictor.go
