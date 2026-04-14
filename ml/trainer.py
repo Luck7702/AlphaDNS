@@ -28,8 +28,11 @@ print(f"Model Accuracy: {accuracy_score(y_test, y_pred) * 100:.2f}%")
 plt.figure(figsize=(20,10))
 # Updated feature names for the visual graph output
 plot_tree(clf, feature_names=['Global_TLD', 'Is_ID', 'Depth'], class_names=['ISP', 'CF', 'Google', 'Quad9'], filled=True)
-plt.savefig('dns_decision_tree.png')
+GRAPH_FILENAME = os.path.join(BASE_DIR, 'dns_decision_tree.png')
+plt.savefig(GRAPH_FILENAME)
 
 # Save as artifact
 joblib.dump(clf, MODEL_FILENAME)
 print(f"[+] Model saved to '{MODEL_FILENAME}'")
+print(f"[+] Graph saved to '{GRAPH_FILENAME}'")
+

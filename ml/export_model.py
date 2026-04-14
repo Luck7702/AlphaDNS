@@ -21,5 +21,3 @@ with open(OUTPUT_FILE, "w") as f:
     f.write(go_code)
 
 print(f"[+] Successfully exported to {OUTPUT_FILE}!")
-
-#git commit -m "Refactor: Use dynamic paths for model export and prediction"
