@@ -10,19 +10,29 @@ import (
 )
 
 var upstreams = map[int]string{
-	0: "192.168.1.1:53", // ISP (Update to your actual Gateway)
-	1: "1.1.1.1:53",     // Cloudflare
-	2: "8.8.8.8:53",     // Google
-	3: "9.9.9.9:53",     // Quad9
+	0: "202.158.3.7", // ISP (Update to your actual Gateway)
+	1: "1.1.1.1:53",  // Cloudflare
+	2: "8.8.8.8:53",  // Google
+	3: "9.9.9.9:53",  // Quad9
 }
 
-func getFeatures(domain string) (int, int, int) {
+// Updated to return float64 to match the ML decision tree requirements
+func getFeatures(domain string) (float64, float64, float64) {
 	d := strings.TrimSuffix(domain, ".")
-	isID := 0
-	if strings.HasSuffix(d, ".id") {
-		isID = 1
+
+	isGlobal := 0.0
+	if strings.HasSuffix(d, ".com") || strings.HasSuffix(d, ".net") || strings.HasSuffix(d, ".org") {
+		isGlobal = 1.0
 	}
-	return len(d), isID, strings.Count(d, ".")
+
+	isID := 0.0
+	if strings.HasSuffix(d, ".id") {
+		isID = 1.0
+	}
+
+	depth := float64(strings.Count(d, "."))
+
+	return isGlobal, isID, depth
 }
 
 func handleQuery(w dns.ResponseWriter, r *dns.Msg) {
@@ -31,10 +41,12 @@ func handleQuery(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	domain := r.Question[0].Name
-	l, id, d := getFeatures(domain)
 	
-	// Call generated predictor
-	class := predictOptimalRoute(l, id, d)
+	// Extract the new features as float64
+	isGlobal, isID, depth := getFeatures(domain)
+
+	// Pass variables to generated predictor
+	class := Predict(isGlobal, isID, depth)
 	target := upstreams[class]
 
 	fmt.Printf("[PROX] %-25s -> Class %d (%s)\n", domain, class, target)
@@ -54,10 +66,10 @@ func handleQuery(w dns.ResponseWriter, r *dns.Msg) {
 
 func main() {
 	dns.HandleFunc(".", handleQuery)
-	server := &dns.Server{Addr: "127.0.0.1:5053", Net: "udp"}
 	
-	fmt.Println("[*] PathPulse Engine running on port 5053...")
-	if err := server.ListenAndServe(); err != nil {
-		log.Fatalf("Fatal: %s", err)
-	}
+	// Port 5353 used for testing to avoid needing sudo right away
+	server := &dns.Server{Addr: ":5353", Net: "udp"} 
+	
+	fmt.Println("[*] AlphaDNS Predictive Engine listening on :5353")
+	log.Fatal(server.ListenAndServe())
 }
