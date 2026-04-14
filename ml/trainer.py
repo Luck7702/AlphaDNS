@@ -11,8 +11,8 @@ MODEL_FILENAME = 'artifact.pkl'
 
 df = pd.read_csv(FILE_NAME)
 
-# FIXED FEATURES: Matching the exact inputs of the Go proxy
-X = df[['Length', 'Is_ID_TLD', 'Subdomain_Depth']]
+# FIXED FEATURES: Updated to use Is_Global_TLD instead of Length
+X = df[['Is_Global_TLD', 'Is_ID_TLD', 'Subdomain_Depth']]
 y = df['Optimal_Class']
 
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -24,7 +24,8 @@ y_pred = clf.predict(X_test)
 print(f"Model Accuracy: {accuracy_score(y_test, y_pred) * 100:.2f}%")
 
 plt.figure(figsize=(20,10))
-plot_tree(clf, feature_names=['Length', 'Is_ID', 'Depth'], class_names=['ISP', 'CF', 'Google', 'Quad9'], filled=True)
+# Updated feature names for the visual graph output
+plot_tree(clf, feature_names=['Global_TLD', 'Is_ID', 'Depth'], class_names=['ISP', 'CF', 'Google', 'Quad9'], filled=True)
 plt.savefig('dns_decision_tree.png')
 
 # Save as artifact

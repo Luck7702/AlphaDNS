@@ -8,7 +8,8 @@ def tree_to_go(tree, feature_names):
     # ... (Keep your exact recurse logic here, it was already perfectly written for Go!) ...
     pass # (Copy your previous recurse function here)
 
-go_code = tree_to_go(clf, ["Length", "Is_ID_TLD", "Subdomain_Depth"])
+# FIXED FEATURES: Updated to match the new dataset and Go engine
+go_code = tree_to_go(clf, ["Is_Global_TLD", "Is_ID_TLD", "Subdomain_Depth"])
 
 # FIXED OUTPUT PATH
 with open("../engine/predictor.go", "w") as f:
