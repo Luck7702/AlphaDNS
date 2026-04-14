@@ -19,7 +19,6 @@ try:
 except FileNotFoundError:
     print(f"[!] Warning: {CONFIG_FILE} not found. Ensure it exists in the root directory.")
     exit(1)
-    # Fallback just in case
     
 
 def get_latency(domain, server_ip):
@@ -46,29 +45,40 @@ if __name__ == "__main__":
 
     with open(OUTPUT_FILE, mode='w', newline='') as csv_file:
         writer = csv.writer(csv_file)
-        writer.writerow(["Domain", "Length", "Is_ID_TLD", "Subdomain_Depth", 
+        # Replaced 'Length' with 'Is_Global_TLD' to prevent ML overfitting
+        writer.writerow(["Domain", "Is_Global_TLD", "Is_ID_TLD", "Subdomain_Depth", 
                          "C0", "C1", "C2", "C3", "Optimal_Class"])
 
         for i, domain in enumerate(domains, 1):
             domain = domain.replace("http://", "").replace("https://", "").replace("/", "").strip()
             
             # EXTRACT FEATURES
-            length = len(domain)
+            is_global_tld = 1 if domain.endswith((".com", ".net", ".org")) else 0
             is_id_tld = 1 if domain.endswith(".id") else 0
             subdomain_depth = domain.count('.')
             
             # PING RESOLVERS
             latencies = {label: get_latency(domain, ip) for label, ip in RESOLVERS.items()}
-            optimal_class = min(latencies, key=latencies.get)
+            
+            # --- FAILURE STATE LOGIC UPDATE ---
+            # Filter out all resolvers that timed out (999.0)
+            valid_latencies = {k: v for k, v in latencies.items() if v < 999.0}
+            
+            if not valid_latencies:
+                # Total failure (Blocked/NXDOMAIN). Fallback to secure Cloudflare instead of ISP.
+                optimal_class = "1"
+            else:
+                # Pick the fastest valid route
+                optimal_class = min(valid_latencies, key=valid_latencies.get)
             
             writer.writerow([
-                domain, length, is_id_tld, subdomain_depth,
+                domain, is_global_tld, is_id_tld, subdomain_depth,
                 latencies.get("0", 999.0), latencies.get("1", 999.0), 
                 latencies.get("2", 999.0), latencies.get("3", 999.0),
                 optimal_class
             ])
             
-            # PRETTY PRINTING
+            # PRETTY PRINTING 
             lat_details = [f"{latencies.get(k, 999.0):10.1f}ms" for k in sorted(latencies.keys())]
             lat_str = " | ".join(lat_details)
             winner_ip = RESOLVERS.get(optimal_class, "Unknown")
