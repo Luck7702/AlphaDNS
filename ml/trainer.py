@@ -4,10 +4,12 @@ from sklearn.model_selection import train_test_split
 from sklearn.tree import DecisionTreeClassifier, plot_tree
 from sklearn.metrics import accuracy_score
 import matplotlib.pyplot as plt
+import os
 
 # FIXED PATHS
-FILE_NAME = "../data/raw_probes.csv"
-MODEL_FILENAME = 'artifact.pkl'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FILE_NAME = os.path.join(BASE_DIR, "../data/raw_probes.csv")
+MODEL_FILENAME = os.path.join(BASE_DIR, 'artifact.pkl')
 
 df = pd.read_csv(FILE_NAME)
 
