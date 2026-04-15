@@ -68,7 +68,7 @@ func main() {
 	dns.HandleFunc(".", handleQuery)
 	
 	// Port 5353 used for testing to avoid needing sudo right away
-	server := &dns.Server{Addr: ":5353", Net: "udp"} 
+	server := &dns.Server{Addr: ":5777", Net: "udp"} 
 	
 	fmt.Println("[*] AlphaDNS Predictive Engine listening on :5353")
 	log.Fatal(server.ListenAndServe())

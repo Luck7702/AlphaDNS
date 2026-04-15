@@ -17,3 +17,5 @@ predictor.go
 # Binaries
 engine/alphadns
 alphadns
+
+/data/domains.csv

@@ -8,6 +8,7 @@ import json
 # --- DYNAMIC PATHS ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INPUT_FILE = os.path.join(BASE_DIR, "../data/domains.csv")
+PRESET_FILE = os.path.join(BASE_DIR, "../data/domains_preset.csv")
 OUTPUT_FILE = os.path.join(BASE_DIR, "../data/raw_probes.csv")
 CONFIG_FILE = os.path.join(BASE_DIR, "../config.json")
 
@@ -35,8 +36,16 @@ def get_latency(domain, server_ip):
 
 if __name__ == "__main__":
     print("[*] Initiating network scan...")
-    df = pd.read_csv(INPUT_FILE)
+    
+    if os.path.exists(INPUT_FILE) and os.path.getsize(INPUT_FILE) > 0:
+        target_path = INPUT_FILE
+    else:
+        target_path = PRESET_FILE
+
+    df = pd.read_csv(target_path)
     domains = df.iloc[:, 0].dropna().astype(str).tolist()
+    
+    
     
     # Print Header with IPs once
     header_ips = [f"{RESOLVERS.get(k, '?.?.?.?'):>12}" for k in sorted(RESOLVERS.keys())]
