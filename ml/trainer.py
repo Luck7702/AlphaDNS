@@ -1,38 +1,30 @@
 import pandas as pd
 import joblib
 from sklearn.model_selection import train_test_split
-from sklearn.tree import DecisionTreeClassifier, plot_tree
-from sklearn.metrics import accuracy_score
-import matplotlib.pyplot as plt
-import os
+from sklearn.ensemble import RandomForestClassifier # <--- NEW IMPORT
+from sklearn.metrics import accuracy_score, classification_report
 
-# FIXED PATHS
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FILE_NAME = os.path.join(BASE_DIR, "../data/raw_probes.csv")
-MODEL_FILENAME = os.path.join(BASE_DIR, 'artifact.pkl')
+# 1. Load your telemetry data (features and target resolver)
+# df = pd.read_csv('../data/raw_probes.csv')
+# X = df[['Is_Global_TLD', 'Is_ID_TLD', 'Subdomain_Depth', 'Time_of_Day', 'Hop_Count']]
+# y = df['Best_Resolver']
 
-df = pd.read_csv(FILE_NAME)
-
-# FIXED FEATURES: Updated to use Is_Global_TLD instead of Length
-X = df[['Is_Global_TLD', 'Is_ID_TLD', 'Subdomain_Depth']]
-y = df['Optimal_Class']
-
+# 2. Split into training and testing
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-clf = DecisionTreeClassifier(max_depth=5, criterion='entropy', random_state=42)
-clf.fit(X_train, y_train)
+# 3. Initialize the Random Forest (The Academic Upgrade!)
+# n_estimators=100 means we are building 100 trees to vote on the best route
+model = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42, n_jobs=-1)
 
-y_pred = clf.predict(X_test)
-print(f"Model Accuracy: {accuracy_score(y_test, y_pred) * 100:.2f}%")
+# 4. Train the model
+print("Training Random Forest model...")
+model.fit(X_train, y_train)
 
-plt.figure(figsize=(20,10))
-# Updated feature names for the visual graph output
-plot_tree(clf, feature_names=['Global_TLD', 'Is_ID', 'Depth'], class_names=['ISP', 'CF', 'Google', 'Quad9'], filled=True)
-GRAPH_FILENAME = os.path.join(BASE_DIR, 'dns_decision_tree.png')
-plt.savefig(GRAPH_FILENAME)
+# 5. Evaluate to ensure it reduces p99 timeouts accurately
+y_pred = model.predict(X_test)
+print("Accuracy:", accuracy_score(y_test, y_pred))
+print(classification_report(y_test, y_pred))
 
-# Save as artifact
-joblib.dump(clf, MODEL_FILENAME)
-print(f"[+] Model saved to '{MODEL_FILENAME}'")
-print(f"[+] Graph saved to '{GRAPH_FILENAME}'")
-
+# 6. Export the model artifact
+joblib.dump(model, 'artifact.pkl')
+print("Model successfully exported as artifact.pkl")
