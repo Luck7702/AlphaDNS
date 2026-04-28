@@ -50,37 +50,41 @@ if __name__ == "__main__":
             if row:
                 domains.append(row[0])
 
-    mode = 'a' if os.path.exists(OUTPUT_FILE) else 'w'
-    with open(OUTPUT_FILE, mode, newline='') as f:
+    # --- PERMANENT AUTO-HEADER FIX ---
+    file_exists = os.path.exists(OUTPUT_FILE)
+    # Checks if the file is genuinely empty (0 bytes) even if it exists
+    is_empty = os.stat(OUTPUT_FILE).st_size == 0 if file_exists else True
+
+    # Always open in append mode to protect old data, but write header if it's "empty"
+    with open(OUTPUT_FILE, 'a', newline='') as f:
         writer = csv.writer(f)
-        
-        # Add 'hour' column to the dataset to train congestion patterns
-        if mode == 'w':
+
+        if is_empty:
             writer.writerow([
                 "domain", "is_global_tld", "is_id_tld", "subdomain_depth", "hour",
                 "0_latency", "1_latency", "2_latency", "3_latency", "optimal_class"
             ])
-            
+    
         for domain in domains:
             is_global_tld = 1 if domain.endswith(('.com', '.net', '.org')) else 0
             is_id_tld = 1 if domain.endswith('.id') else 0
             subdomain_depth = domain.count('.')
             current_hour = datetime.now().hour
-            
+    
             # PING RESOLVERS
             latencies = {label: get_latency(domain, ip) for label, ip in RESOLVERS.items()}
-            
+    
             # --- FAILURE STATE LOGIC UPDATE ---
             # Filter out all resolvers that timed out (2000.0)
             valid_latencies = {k: v for k, v in latencies.items() if v < 2000.0}
-            
+    
             if not valid_latencies:
                 # Total failure (Blocked/NXDOMAIN). Fallback to secure Cloudflare instead of ISP.
                 optimal_class = "1"
             else:
                 # Pick the fastest valid route 
                 optimal_class = min(valid_latencies, key=valid_latencies.get)
-            
+
             # Save the extended features to the CSV
             writer.writerow([
                 domain, is_global_tld, is_id_tld, subdomain_depth, current_hour,
@@ -88,16 +92,16 @@ if __name__ == "__main__":
                 latencies.get("2", 2000.0), latencies.get("3", 2000.0),
                 optimal_class
             ])
-            
+  
             # PRETTY PRINTING (Retained your original formatting!)
             lat_details = [f"{latencies.get(k, 2000.0):10.1f}ms" for k in sorted(latencies.keys())]
             lat_str = " | ".join(lat_details)
             winner_ip = RESOLVERS.get(optimal_class, "Unknown")
-            
+    
             # Color coding for the winner (ANSI escape codes)
             GREEN = "\033[92m"
             RESET = "\033[0m"
-            
+    
             print(f"[{domain:30}] {lat_str} | Best: {GREEN}{optimal_class} ({winner_ip}){RESET}")
-            
+    
     print(f"[*] Scan complete. Raw data exported to {OUTPUT_FILE}")

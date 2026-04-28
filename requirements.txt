@@ -1,5 +1,4 @@
-pandas
-scikit-learn
-dnspython
-joblib
-matplotlib
+dnspython>=2.3.0
+pandas>=2.0.0
+scikit-learn>=1.3.0
+m2cgen>=0.10.0
