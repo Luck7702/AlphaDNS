@@ -1,43 +1,30 @@
 import pandas as pd
-import joblib
-import os
-from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.model_selection import train_test_split
+# Using 'm2cgen' (Model 2 Code Generator) is a great trick to export ML to raw Go code!
+import m2cgen as m2c 
 
-# 1. Setup paths to find your data correctly
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_PATH = os.path.join(BASE_DIR, '../data/raw_probes.csv')
-MODEL_PATH = os.path.join(BASE_DIR, 'artifact.pkl')
+def train_and_export_model(csv_path="data/raw_probes.csv"):
+    # 1. Load Data
+    df = pd.read_csv(csv_path)
+    
+    # Define features based on your paper (Hop Count, Time of Day, TLD Type, etc.)
+    X = df[['hop_count', 'time_of_day', 'is_global_tld', 'subdomain_depth']]
+    y = df['best_resolver_label'] # e.g., "Google", "Cloudflare", "ISP"
 
-# 2. Load your telemetry data
-if not os.path.exists(DATA_PATH):
-    print(f"Error: Could not find {DATA_PATH}. Make sure you ran the scanner first!")
-    exit(1)
+    # 2. Train the Random Forest (The Academic Upgrade)
+    # n_estimators=15 is small enough for fast Go execution but accurate enough for an ensemble
+    clf = RandomForestClassifier(n_estimators=15, max_depth=10, random_state=42)
+    clf.fit(X, y)
 
-df = pd.read_csv(DATA_PATH)
+    # 3. Export to Native Go Code (Solves the predictor.go bug)
+    # This converts the Random Forest into native Go if-else statements!
+    go_code = m2c.export_to_go(clf)
+    
+    with open('../engine/rf_model.go', 'w') as f:
+        f.write(go_code)
+    
+    print("Random Forest trained and exported natively to Go!")
 
-# 3. Define Features (X) and Target (y) based on your actual CSV headers
-# We use TLD types and Subdomain Depth as our network-aware features
-X = df[['Is_Global_TLD', 'Is_ID_TLD', 'Subdomain_Depth']]
-y = df['Optimal_Class']
-
-# 4. Split into training and testing (80% train, 20% test)
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-# 5. Initialize the Random Forest (The Committee of Experts)
-# n_estimators=100 means we use 100 trees to vote on the best resolver
-model = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42, n_jobs=-1)
-
-# 6. Train the model
-print("Training Random Forest model for AlphaDNS...")
-model.fit(X_train, y_train)
-
-# 7. Evaluate the performance
-y_pred = model.predict(X_test)
-print(f"Model Accuracy: {accuracy_score(y_test, y_pred) * 100:.2f}%")
-print("\nClassification Report:\n", classification_report(y_test, y_pred))
-
-# 8. Export the model artifact for the Go Engine to use
-joblib.dump(model, MODEL_PATH)
-print(f"Success! Model exported to: {MODEL_PATH}")
+if __name__ == "__main__":
+    train_and_export_model()
