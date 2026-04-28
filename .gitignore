@@ -12,7 +12,6 @@ venv/
 
 !sample.csv
 
-predictor.go
 
 # Binaries
 engine/alphadns
