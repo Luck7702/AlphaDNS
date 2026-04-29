@@ -48,41 +48,46 @@ func extractFeatures(req *dns.Msg) DNSFeatures {
 }
 
 // handleDNSRequest is the main proxy logic triggered on every DNS query
+// handleDNSRequest is the main proxy logic triggered on every DNS query
 func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
-	// 1. Extract real-time telemetry from the query
+	// 1. Extract Features for the Research Variables
+	// FIX: We now use the extractFeatures function you already built!
 	features := extractFeatures(r)
-
-	// 2. Predict the best resolver using the ML Engine (calls predictor.go)
-	bestResolverName, err := Predict(features)
-	if err != nil {
-		log.Printf("ML Predict Error: %v. Falling back to default (Cloudflare).", err)
-		bestResolverName = "Cloudflare"
+	
+	domain := ""
+	if len(r.Question) > 0 {
+		domain = r.Question[0].Name
 	}
 
-	// 3. Map the ML output string to the actual IP address
-	targetIP, exists := resolvers[bestResolverName]
-	if !exists {
-		log.Printf("Unknown resolver '%s' selected by ML. Falling back to Cloudflare.", bestResolverName)
-		targetIP = resolvers["Cloudflare"]
-	}
+	// 2. Predict the best resolver
+	targetID, confidence := Predict(features) 
+	
+	// Logging for your research data collection
+	log.Printf("[*] Query: %s | Selected: %s (Confidence: %.2f)", domain, targetID, confidence)
 
-	// 4. Forward the request to the winning upstream resolver
-	client := new(dns.Client)
-	client.Timeout = 2 * time.Second // Aggressive timeout to protect p99 latency
-
-	resp, _, err := client.Exchange(r, targetIP)
-	if err != nil {
-		log.Printf("Error forwarding to %s (%s): %v", bestResolverName, targetIP, err)
-		dns.HandleFailed(w, r)
+	// FIX: Changed UpstreamResolvers to resolvers to match your map declaration
+	targetIP, ok := resolvers[targetID]
+	if !ok {
+		log.Printf("[!] Resolver ID %s not found in mapping", targetID)
 		return
 	}
 
-	// 5. Return the successfully resolved DNS answer back to the user
-	resp.SetReply(r)
-	w.WriteMsg(resp)
+	// 3. Perform the Forwarding (The Research Intervention)
+	client := new(dns.Client)
+	// 2.0s timeout aligns perfectly with our p99 methodology!
+	client.Timeout = 2 * time.Second 
 	
-	// Print to console to prove the dynamic routing is working
-	log.Printf("Routed %s -> %s", r.Question[0].Name, bestResolverName)
+	response, _, err := client.Exchange(r, targetIP) 
+
+	if err != nil {
+		log.Printf("[!] Forwarding failed to %s: %v", targetIP, err)
+		return
+	}
+
+	// 4. Return the result to the user
+	if response != nil {
+		w.WriteMsg(response)
+	}
 }
 
 func main() {
@@ -90,7 +95,7 @@ func main() {
 	dns.HandleFunc(".", handleDNSRequest)
 
 	// Start the server on the standard DNS port
-	server := &dns.Server{Addr: ":53", Net: "udp"}
+	server := &dns.Server{Addr: ":533", Net: "udp"}
 	fmt.Printf("AlphaDNS Hybrid Forwarder initializing...\n")
 	fmt.Printf("Listening for DNS requests on UDP port 53...\n")
 	
