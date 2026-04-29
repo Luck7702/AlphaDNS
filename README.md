@@ -3,7 +3,7 @@
 
 > **Working Research Title:** *Optimizing Web Latency in Indonesia through a Machine Learning-Based Hybrid DNS Resolver Selection Mechanism.*
 > 
-> **Academic Context:** Developed as a research prototype for the Research Methodology in Computer Science course (BINUS University).
+
 
 ## 📖 Overview
 Network latency in Indonesia, particularly across local ISPs, is often volatile, resulting in extreme "long tail" timeouts. AlphaDNS is a research prototype that replaces static DNS routing with a **Predictive Machine Learning Engine**. 
@@ -61,12 +61,11 @@ cd ../engine
 go mod tidy
 sudo go run main.go predictor.go
 
-    Action: Binds to UDP Port 53. (Requires sudo or administrator privileges).
+    Action: Binds to UDP Port 53 (by default), change according to config.json (Requires sudo or administrator privileges).
 
     Result: Intercepts local DNS requests, extracts live features, queries predict_dns.py for the Random Forest's decision, and forwards the packet to the winning resolver instantly.
 
 📂 Project Structure
-Plaintext
 
 AlphaDNS/
 ├── data/
