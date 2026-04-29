@@ -16,4 +16,10 @@ venv/
 # Binaries
 engine/alphadns_bin
 
+*.mod
+*.sum
+
 /data/domains.csv
+
+/engine/alphadns_bin
+/engine/rf_model.go
