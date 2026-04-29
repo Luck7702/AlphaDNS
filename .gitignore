@@ -20,6 +20,7 @@ engine/alphadns_bin
 *.sum
 
 /data/domains.csv
+/data/raw_probes.csv
 
 /engine/alphadns_bin
 /engine/rf_model.go
