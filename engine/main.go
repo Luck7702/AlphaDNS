@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -10,11 +12,31 @@ import (
 )
 
 // Upstream resolvers mapping (The options your Random Forest chooses from)
-var resolvers = map[string]string{
-	"Cloudflare": "1.1.1.1:53",
-	"Google":     "8.8.8.8:53",
-	"Quad9":      "9.9.9.9:53",
-	"ISP":        "202.134.1.10:53", // Replace with your actual Indonesian ISP DNS
+var resolvers map[string]string
+
+// loadConfig parses the config.json file and populates the resolvers map
+func loadConfig() {
+	data, err := os.ReadFile("../config.json")
+	if err != nil {
+		log.Fatalf("[!] Failed to read config file: %v", err)
+	}
+
+	var config struct {
+		Resolvers map[string]string `json:"resolvers"`
+	}
+
+	if err := json.Unmarshal(data, &config); err != nil {
+		log.Fatalf("[!] Failed to parse config JSON: %v", err)
+	}
+
+	resolvers = make(map[string]string)
+	for id, addr := range config.Resolvers {
+		// Ensure the address has a port; append :53 if missing
+		if !strings.Contains(addr, ":") {
+			addr = fmt.Sprintf("%s:53", addr)
+		}
+		resolvers[id] = addr
+	}
 }
 
 // extractFeatures parses the incoming DNS query and builds the struct for the ML model
@@ -91,6 +113,9 @@ func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 }
 
 func main() {
+	// Load resolvers from config.json before starting the server
+	loadConfig()
+
 	// Bind the proxy handler to all incoming DNS requests
 	dns.HandleFunc(".", handleDNSRequest)
 
