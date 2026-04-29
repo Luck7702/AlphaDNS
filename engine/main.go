@@ -13,6 +13,7 @@ import (
 
 // Upstream resolvers mapping (The options your Random Forest chooses from)
 var resolvers map[string]string
+var listenPort string
 
 // loadConfig parses the config.json file and populates the resolvers map
 func loadConfig() {
@@ -23,11 +24,14 @@ func loadConfig() {
 
 	var config struct {
 		Resolvers map[string]string `json:"resolvers"`
+		Port      int               `json:"port"`
 	}
 
 	if err := json.Unmarshal(data, &config); err != nil {
 		log.Fatalf("[!] Failed to parse config JSON: %v", err)
 	}
+
+	listenPort = fmt.Sprintf(":%d", config.Port)
 
 	resolvers = make(map[string]string)
 	for id, addr := range config.Resolvers {
@@ -120,9 +124,9 @@ func main() {
 	dns.HandleFunc(".", handleDNSRequest)
 
 	// Start the server on the standard DNS port
-	server := &dns.Server{Addr: ":533", Net: "udp"}
+	server := &dns.Server{Addr: listenPort, Net: "udp"}
 	fmt.Printf("AlphaDNS Hybrid Forwarder initializing...\n")
-	fmt.Printf("Listening for DNS requests on UDP port 53...\n")
+	fmt.Printf("Listening for DNS requests on UDP port %s...\n", listenPort)
 	
 	err := server.ListenAndServe()
 	defer server.Shutdown()
