@@ -4,19 +4,20 @@ import (
 	"fmt"
 )
 
-// DNSFeatures now matches exactly what main.go is looking for
+// DNSFeatures mirrors the model's input contract. The fields, and the order
+// they are packed into `input` below, MUST match ml/dataset.py FEATURES
+// (is_global_tld, is_id_tld, subdomain_depth, hour). Changing one side
+// without the other silently breaks routing. See CLAUDE.md.
 type DNSFeatures struct {
 	IsGlobalTLD    float64
 	IsIDTLD        float64
 	SubdomainDepth float64
-	TimeOfDay      float64 // This maps to the 'hour' feature in our model
-	HopCount       float64 // Added to satisfy main.go; ignored by the model for now
+	TimeOfDay      float64 // integer hour-of-day; the model's "hour" feature
 }
 
-// Predict now returns 2 values: (ResolverID string, Confidence float64)
+// Predict returns (ResolverID string, Confidence float64) for a query.
 func Predict(features DNSFeatures) (string, float64) {
-	// 1. Prepare input for the Random Forest
-	// Note: We skip HopCount here because it wasn't in our training data
+	// 1. Pack features in the exact order the exported scorer expects.
 	input := []float64{
 		features.IsGlobalTLD,
 		features.IsIDTLD,

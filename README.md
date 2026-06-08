@@ -1,90 +1,147 @@
 # AlphaDNS 🚀
-**An Intelligent Hybrid Local DNS Forwarder**
+**An ML-Driven Hybrid DNS Forwarder — and an honest evaluation of whether it helps.**
 
-> **Working Research Title:** *Optimizing Web Latency in Indonesia through a Machine Learning-Based Hybrid DNS Resolver Selection Mechanism.*
-> 
+> **Research question:** *Can a machine-learning–based hybrid DNS resolver
+> selection mechanism improve web latency and resolution success in Indonesia,
+> versus a static single-resolver configuration?*
 
+AlphaDNS is a research prototype **and the measurement harness that tests its own
+hypothesis**. It does not assume ML routing wins — it measures it, and reports
+the result whether positive or negative.
 
-## 📖 Overview
-Network latency in Indonesia, particularly across local ISPs, is often volatile, resulting in extreme "long tail" timeouts. AlphaDNS is a research prototype that replaces static DNS routing with a **Predictive Machine Learning Engine**. 
+---
 
-Instead of relying on a single upstream provider (which may experience sudden congestion), AlphaDNS uses a **Random Forest Classifier** to dynamically evaluate network-aware features (like TLD type, subdomain depth, and time of day) in real-time. It then predicts and selects the optimal upstream resolver (ISP, Cloudflare, Google, or Quad9) for every single query, specifically optimizing for **p99 (99th percentile) latency** and resolution success rate.
+## TL;DR — what the current data shows
+
+On the bundled dataset (520 Indonesia-relevant domains, probed 21:00–22:00 over
+WiFi), **per-query ML resolver selection does _not_ beat a single reliable
+anycast resolver.** The evaluation harness (`analysis/evaluate.py`) produces:
+
+| policy | success % | mean eff. latency (ms) | p95 (ms) | regret vs oracle (ms) |
+|---|---:|---:|---:|---:|
+| static ISP (`103.88.88.88`) | 73.3 | 658.9 | 2000 | 507.8 |
+| static Cloudflare (`1.1.1.1`) | 95.5 | 214.6 | 816 | 63.4 |
+| **static Google (`8.8.8.8`)** | **95.5** | **198.6** | **806** | **47.5** |
+| static Quad9 (`9.9.9.9`) | 80.8 | 576.9 | 2000 | 425.8 |
+| random | 86.1 | 421.4 | 2000 | 270.2 |
+| **ML hybrid** (out-of-fold) | 95.5 | 198.6 | 806 | 47.5 |
+| oracle (upper bound) | 95.7 | 151.1 | 307 | 0 |
+
+**Mechanism behind the result:**
+1. **Resolution success dominates, not speed.** The local ISP resolver fails
+   **27%** of queries and Quad9 **19%**, while Cloudflare/Google fail ~4.5% and
+   already match the oracle's 95.7% success ceiling.
+2. **Latency among reliable resolvers is noise.** The fastest resolver flips on
+   **62%** of repeat probes of the same domain — there is no stable, learnable
+   "which is fastest" signal from static features.
+3. So the model correctly **collapses to "always pick a reliable anycast
+   resolver."** Its out-of-fold numbers are statistically indistinguishable from
+   the best static baseline (95% CI on the delta crosses zero).
+
+This is a **credible negative result**, not a failure of the code. See
+[CLAUDE.md](CLAUDE.md) for the full reasoning and what *would* make ML pay off.
+
+---
 
 ## 🏗️ Architecture
-The system uses a decoupled architecture to maintain near-zero overhead during active routing:
-1. **Telemetry & Training (Python):** Handles offline network probing and trains the Random Forest model (the "Committee of Experts").
-2. **Real-time Engine (Go):** A high-performance DNS proxy that intercepts local traffic, extracts features, and executes the ML model via a fast subprocess to route the packet.
+
+Two decoupled halves:
+
+1. **Telemetry & analysis (Python)** — probes resolvers, trains the model, and
+   (crucially) **evaluates** ML routing against static / random / oracle
+   policies on held-out data.
+2. **Real-time engine (Go)** — a DNS proxy that extracts features per query and
+   runs the model **compiled to native Go** (via `m2cgen`), so routing adds
+   no per-query subprocess or IPC overhead.
+
+> The model is compiled *into* the Go binary (`engine/rf_model.go`). There is no
+> Python-at-request-time. (An earlier design called a `predict_dns.py`
+> subprocess per query; that was removed — it was never wired up and would have
+> dominated latency.)
 
 ---
 
 ## ⚙️ Prerequisites
-Ensure you have the following installed on your system:
-* **Python 3.8+** (for telemetry and ML training)
-* **Go 1.18+** (for the real-time proxy engine)
-* Python packages: `pandas`, `scikit-learn`, `joblib`
-  ```bash
-  pip install -r requirements.txt
 
-🚀 How to Use AlphaDNS
+* **Python 3.10+** — telemetry, training, analysis
+* **Go 1.18+** — the proxy engine
+* `pip install -r requirements.txt`
+  (`m2cgen` is only needed to *re-export* the Go model; everything else runs
+  without it.)
 
-AlphaDNS operates on a dynamic "Train then Execute" workflow.
-Phase 1: Data Collection (Telemetry)
+---
 
-Before the model can make intelligent routing decisions, it needs to understand your current network environment.
-Bash
+## 🚀 Workflow: Scan → Train → **Evaluate** → Deploy
 
-cd telemetry
-python3 scanner.py
+### Phase 1 — Collect telemetry
+```bash
+python3 telemetry/scanner.py --probes 3
+```
+Probes each resolver for each domain **3× and keeps the median** (de-noises
+WiFi jitter), recording success and latency separately into
+`data/raw_probes.csv`. Run it across **many hours of the day** if you want to
+test the time-of-day hypothesis — the bundled data only covers 21:00–22:00.
 
-    Action: Let this run for at least 15-30 minutes.
+### Phase 2 — Evaluate the hypothesis (the important step)
+```bash
+python3 analysis/evaluate.py
+```
+Out-of-fold cross-validated comparison of every routing policy on success rate,
+effective-latency percentiles, and regret, with bootstrap confidence intervals
+and a clear verdict. Writes `results/metrics.csv` and plots to `results/`.
+**Run this before claiming ML helps.**
 
-    Result: Probes various upstream resolvers and saves the network latency performance to data/raw_probes.csv.
+### Phase 3 — Train & export the model
+```bash
+python3 ml/trainer.py
+```
+Trains on noise-resistant labels, reports CV accuracy against the no-skill
+majority floor + feature importances, saves `ml/artifact.pkl`, and (if `m2cgen`
+is installed) regenerates `engine/rf_model.go`.
 
-Phase 2: Train the Machine Learning Model
+### Phase 4 — Launch the engine
+```bash
+cd engine && go mod tidy && go build
+sudo ./hybrid-dns        # binds the UDP port from config.json (default 53)
+```
+Set your OS resolver to `127.0.0.1` to route real traffic through it.
 
-Turn your raw telemetry data into the Random Forest "consensus" model.
-Bash
+---
 
-cd ../ml
-python3 trainer.py
-
-    Action: Reads the CSV and builds an ensemble of 100 decision trees to map network features to the optimal resolver.
-
-    Result: Outputs a trained artifact.pkl file. Note: If accuracy is low (e.g., ~50%), run the scanner longer to gather more diverse data!
-
-Phase 3: Launch the Engine
-
-Start the high-performance Go proxy to route your actual internet traffic.
-Bash
-
-cd ../engine
-go mod tidy
-sudo go run main.go predictor.go
-
-    Action: Binds to UDP Port 53 (by default), change according to config.json (Requires sudo or administrator privileges).
-
-    Result: Intercepts local DNS requests, extracts live features, queries predict_dns.py for the Random Forest's decision, and forwards the packet to the winning resolver instantly.
-
-📂 Project Structure
-
+## 📂 Project structure
+```
 AlphaDNS/
+├── config.json              # resolvers map {id: ip} + listen port (shared by Go & Python)
 ├── data/
-│   ├── domains.csv          # List of target domains for testing
-│   └── raw_probes.csv       # Telemetry database generated by scanner
+│   ├── domains.csv          # target domains to probe
+│   └── raw_probes.csv       # telemetry output (gitignored)
 ├── telemetry/
-│   └── scanner.py           # Actively probes resolvers and builds the dataset
+│   └── scanner.py           # multi-probe resolver telemetry collector
 ├── ml/
-│   ├── trainer.py           # Trains the Random Forest model
-│   ├── predict_dns.py       # ML Subprocess called by Go to vote on routes
-│   └── artifact.pkl         # The exported Random Forest model
+│   ├── dataset.py           # SHARED feature/label contract (single source of truth)
+│   ├── trainer.py           # trains + exports the model, reports honest signal
+│   └── artifact.pkl         # trained sklearn model (gitignored)
+├── analysis/
+│   └── evaluate.py          # policy comparison harness  ← the research deliverable
+├── results/                 # metrics.csv + plots (generated)
 └── engine/
-    ├── main.go              # The core Go DNS Proxy server
-    ├── predictor.go         # Bridge that passes JSON features to Python
-    ├── go.mod               # Go dependencies (miekg/dns)
-    └── go.sum
+    ├── main.go              # DNS proxy: feature extraction, forwarding, SERVFAIL
+    ├── predictor.go         # packs features → calls the compiled scorer
+    └── rf_model.go          # m2cgen-exported Random Forest (gitignored; regenerated by trainer)
+```
 
-🔬 Research Dependent Variables
+## 🔬 Variables
+* **Dependent:** resolution success rate; effective latency (p50/p95/p99, where a
+  failure costs a 2000 ms timeout penalty).
+* **Policies compared:** static-ISP, static-anycast (Cloudflare/Google/Quad9),
+  random (lower bound), oracle (upper bound), ML hybrid.
 
-    p99 Latency: Reducing the slowest 1% of DNS queries to eliminate network timeouts.
-
-    Resolution Success Rate: Ensuring the chosen resolver actually returns a valid A/AAAA record rather than dropping the packet.
+## ⚠️ Known limitations (read before citing results)
+* **Temporal coverage:** bundled data is two adjacent hours only — the diurnal
+  congestion hypothesis is **untestable** with it. Re-scan across the day.
+* **Measurement noise:** collected over WiFi; multi-probe medians help but a
+  wired LAN run is strongly preferred for latency claims.
+* **Feature signal:** TLD / subdomain-depth / hour have little causal link to
+  which resolver is fastest. The oracle shows real latency headroom (151 vs
+  199 ms mean), but capturing it needs **live** features (per-resolver latency
+  EWMA, recent failure rate), not static ones. See [CLAUDE.md](CLAUDE.md).

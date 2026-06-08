@@ -23,4 +23,8 @@ engine/alphadns_bin
 /data/raw_probes.csv
 
 /engine/alphadns_bin
+/engine/hybrid-dns
 /engine/rf_model.go
+
+# Generated analysis outputs
+/results/

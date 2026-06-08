@@ -1,107 +1,149 @@
-import dns.resolver
-import time
+"""AlphaDNS telemetry scanner.
+
+Probes every configured upstream resolver for every target domain and
+records, per (domain, resolver):
+
+  * ``success`` -- did the resolver return an A record (majority of probes)?
+  * ``latency`` -- median latency in ms over the *successful* probes.
+
+Design choices that matter for data quality
+--------------------------------------------
+* **Multiple probes + median.** A single probe over WiFi is dominated by
+  jitter; the fastest-resolver argmin then flips on noise. We probe each
+  pair ``--probes`` times (default 3) and keep the median of the
+  successful probes, which materially de-noises the latency estimate.
+* **Success is separate from latency.** Failures are recorded as
+  ``success=0`` with a blank latency rather than a magic ``2000.0`` value,
+  so downstream code never averages a sentinel into a real distribution.
+  (``ml/dataset.py`` reads both schemas, old and new.)
+* **Randomised domain order** each run, to avoid systematic ordering bias.
+
+Run: ``python3 telemetry/scanner.py [--probes N] [--timeout S]``
+Requires: ``dnspython`` (``pip install -r requirements.txt``).
+"""
+
+from __future__ import annotations
+
+import argparse
 import csv
-import pandas as pd
-import os
 import json
+import os
+import random
+import statistics
+import sys
+import time
 from datetime import datetime
 
-# --- DYNAMIC PATHS ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-INPUT_FILE = os.path.join(BASE_DIR, "../data/domains.csv")
-PRESET_FILE = os.path.join(BASE_DIR, "../data/domains_preset.csv")
-OUTPUT_FILE = os.path.join(BASE_DIR, "../data/raw_probes.csv")
-CONFIG_FILE = os.path.join(BASE_DIR, "../config.json")
+import dns.resolver
 
-# --- LOAD CONFIGURATION ---
-try:
-    with open(CONFIG_FILE, 'r') as f:
-        config = json.load(f)
-        RESOLVERS = config.get("resolvers", {})
-except FileNotFoundError:
-    print(f"[!] Warning: {CONFIG_FILE} not found. Ensure it exists in the root directory.")
-    exit(1)
-    
-def get_latency(domain, server_ip):
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(BASE_DIR)
+INPUT_FILE = os.path.join(ROOT_DIR, "data", "domains.csv")
+PRESET_FILE = os.path.join(ROOT_DIR, "data", "domains_preset.csv")
+OUTPUT_FILE = os.path.join(ROOT_DIR, "data", "raw_probes.csv")
+CONFIG_FILE = os.path.join(ROOT_DIR, "config.json")
+
+GREEN, DIM, RESET = "\033[92m", "\033[2m", "\033[0m"
+
+
+def load_config() -> dict:
+    try:
+        with open(CONFIG_FILE) as fh:
+            return json.load(fh)
+    except FileNotFoundError:
+        sys.exit(f"[!] {CONFIG_FILE} not found. It must define a 'resolvers' map.")
+
+
+def probe_once(domain: str, server_ip: str, timeout: float) -> float | None:
+    """One probe. Returns latency in ms, or None on failure/timeout."""
     resolver = dns.resolver.Resolver(configure=False)
     resolver.nameservers = [server_ip]
-    # Updated to 2.0s to align with our methodology of catching "long tail" timeouts
-    resolver.timeout = 2.0 
+    resolver.lifetime = timeout
+    resolver.timeout = timeout
     try:
         start = time.perf_counter()
-        resolver.resolve(domain, 'A') 
-        end = time.perf_counter()
-        return round((end - start) * 1000, 2)
+        resolver.resolve(domain, "A")
+        return round((time.perf_counter() - start) * 1000, 2)
     except Exception:
-        # Failure State modeled as a 2000ms p99 catastrophe (replaces 999.0)
-        return 2000.0
+        return None
+
+
+def measure(domain: str, server_ip: str, probes: int, timeout: float):
+    """Probe ``probes`` times; return (success, median_latency_or_None)."""
+    samples = [probe_once(domain, server_ip, timeout) for _ in range(probes)]
+    ok = [s for s in samples if s is not None]
+    # Majority vote on success; median latency over the successful probes.
+    success = len(ok) > probes // 2
+    latency = round(statistics.median(ok), 2) if ok else None
+    return success, latency
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="AlphaDNS resolver telemetry scanner")
+    ap.add_argument("--probes", type=int, default=3, help="probes per (domain,resolver) [3]")
+    ap.add_argument("--timeout", type=float, default=2.0, help="per-probe timeout seconds [2.0]")
+    args = ap.parse_args()
+
+    config = load_config()
+    resolvers: dict[str, str] = config.get("resolvers", {})
+    if not resolvers:
+        sys.exit("[!] config.json has no 'resolvers' to probe.")
+    ids = sorted(resolvers.keys(), key=int)
+
+    source = INPUT_FILE if os.path.exists(INPUT_FILE) else PRESET_FILE
+    with open(source) as fh:
+        reader = csv.reader(fh)
+        next(reader, None)  # header
+        domains = [row[0].strip() for row in reader if row and row[0].strip()]
+    random.shuffle(domains)
+
+    print(f"[*] Scan start {datetime.now():%Y-%m-%d %H:%M:%S} | "
+          f"{len(domains)} domains x {len(ids)} resolvers x {args.probes} probes")
+
+    is_empty = (not os.path.exists(OUTPUT_FILE)) or os.stat(OUTPUT_FILE).st_size == 0
+    header = ["domain", "is_global_tld", "is_id_tld", "subdomain_depth", "hour", "timestamp"]
+    for rid in ids:
+        header += [f"{rid}_latency", f"{rid}_success"]
+    header += ["optimal_class"]
+
+    with open(OUTPUT_FILE, "a", newline="") as fh:
+        writer = csv.writer(fh)
+        if is_empty:
+            writer.writerow(header)
+
+        try:
+            for n, domain in enumerate(domains, 1):
+                is_global = int(domain.endswith((".com", ".net", ".org")))
+                is_id = int(domain.endswith(".id"))
+                depth = domain.count(".")  # MUST match the Go engine: len(labels)-1
+                hour = datetime.now().hour
+
+                results = {rid: measure(domain, ip, args.probes, args.timeout)
+                           for rid, ip in resolvers.items()}
+
+                # Informational best-effort label: fastest *reliable* resolver.
+                ok = {rid: lat for rid, (s, lat) in results.items() if s and lat is not None}
+                optimal = min(ok, key=ok.get) if ok else "1"  # fallback: anycast
+
+                row = [domain, is_global, is_id, depth, hour, datetime.now().isoformat(timespec="seconds")]
+                for rid in ids:
+                    s, lat = results[rid]
+                    row += ["" if lat is None else lat, int(s)]
+                row += [optimal]
+                writer.writerow(row)
+                fh.flush()
+
+                cells = " | ".join(
+                    f"{rid}:{(str(results[rid][1])+'ms') if results[rid][0] else 'FAIL':>9}"
+                    for rid in ids)
+                win = resolvers.get(optimal, "?")
+                print(f"[{n:4}/{len(domains)}] {domain:30} {cells}  -> {GREEN}{optimal} ({win}){RESET}")
+        except KeyboardInterrupt:
+            print(f"\n[!] Interrupted; partial data saved to {OUTPUT_FILE}")
+            return
+
+    print(f"[*] Scan complete -> {OUTPUT_FILE}")
+
 
 if __name__ == "__main__":
-    print(f"[*] Initiating network scan at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...")
-    
-    file_to_use = INPUT_FILE if os.path.exists(INPUT_FILE) else PRESET_FILE
-    
-    # Read domains
-    domains = []
-    with open(file_to_use, 'r') as f:
-        reader = csv.reader(f)
-        next(reader, None) # Skip header
-        for row in reader:
-            if row:
-                domains.append(row[0])
-
-    # --- PERMANENT AUTO-HEADER FIX ---
-    file_exists = os.path.exists(OUTPUT_FILE)
-    # Checks if the file is genuinely empty (0 bytes) even if it exists
-    is_empty = os.stat(OUTPUT_FILE).st_size == 0 if file_exists else True
-
-    # Always open in append mode to protect old data, but write header if it's "empty"
-    with open(OUTPUT_FILE, 'a', newline='') as f:
-        writer = csv.writer(f)
-
-        if is_empty:
-            writer.writerow([
-                "domain", "is_global_tld", "is_id_tld", "subdomain_depth", "hour",
-                "0_latency", "1_latency", "2_latency", "3_latency", "optimal_class"
-            ])
-    
-        for domain in domains:
-            is_global_tld = 1 if domain.endswith(('.com', '.net', '.org')) else 0
-            is_id_tld = 1 if domain.endswith('.id') else 0
-            subdomain_depth = domain.count('.')
-            current_hour = datetime.now().hour
-    
-            # PING RESOLVERS
-            latencies = {label: get_latency(domain, ip) for label, ip in RESOLVERS.items()}
-    
-            # --- FAILURE STATE LOGIC UPDATE ---
-            # Filter out all resolvers that timed out (2000.0)
-            valid_latencies = {k: v for k, v in latencies.items() if v < 2000.0}
-    
-            if not valid_latencies:
-                # Total failure (Blocked/NXDOMAIN). Fallback to secure Cloudflare instead of ISP.
-                optimal_class = "1"
-            else:
-                # Pick the fastest valid route 
-                optimal_class = min(valid_latencies, key=valid_latencies.get)
-
-            # Save the extended features to the CSV
-            writer.writerow([
-                domain, is_global_tld, is_id_tld, subdomain_depth, current_hour,
-                latencies.get("0", 2000.0), latencies.get("1", 2000.0), 
-                latencies.get("2", 2000.0), latencies.get("3", 2000.0),
-                optimal_class
-            ])
-  
-            # PRETTY PRINTING (Retained your original formatting!)
-            lat_details = [f"{latencies.get(k, 2000.0):10.1f}ms" for k in sorted(latencies.keys())]
-            lat_str = " | ".join(lat_details)
-            winner_ip = RESOLVERS.get(optimal_class, "Unknown")
-    
-            # Color coding for the winner (ANSI escape codes)
-            GREEN = "\033[92m"
-            RESET = "\033[0m"
-    
-            print(f"[{domain:30}] {lat_str} | Best: {GREEN}{optimal_class} ({winner_ip}){RESET}")
-    
-    print(f"[*] Scan complete. Raw data exported to {OUTPUT_FILE}")
+    main()

@@ -1,0 +1,160 @@
+Optimizing DNS Resolution Latency and Reliability in Indonesia through a Machine Learning-Based Hybrid Resolver Selection Mechanism
+
+
+Abstract—The efficiency of web navigation is fundamentally constrained by the performance of the Domain Name System (DNS), which serves as the primary translation layer for network routing. In the context of Indonesia's network infrastructure, end-users are typically locked into a single, static recursive resolver — either a local Internet Service Provider (ISP) resolver or a global Anycast resolver such as Cloudflare (1.1.1.1) or Google (8.8.8.8). It is commonly assumed that local ISP resolvers offer lower latency for domestic domains while global Anycast resolvers offer superior reliability for international domains, implying a "latency tax" in which any single static choice is sub-optimal for part of a user's traffic. This research treats that assumption as an open, testable hypothesis rather than an established fact, and proposes a Machine Learning-Based Hybrid DNS Routing mechanism that dynamically selects a recursive resolver per query. The system is realised as a two-part framework: a Python telemetry-and-training pipeline that probes candidate resolvers and trains a lightweight Random Forest classifier, and a high-performance Go proxy in which the trained model is compiled to native code, so that per-query routing adds negligible overhead. Critically, the mechanism is evaluated against two co-primary outcomes — DNS resolution success rate and resolution latency — using a rigorous out-of-fold methodology that benchmarks the model not only against static baselines but also against random (lower-bound) and oracle (upper-bound) policies. The contribution of this work is therefore twofold: a reproducible measurement-and-routing framework, and an honest empirical answer to whether context-aware resolver selection improves DNS performance in a regional Indonesian network setting.
+
+1.1 Background of Study (Latar Belakang)
+The Domain Name System (DNS) is the foundational routing directory of the internet, responsible for translating human-readable hostnames into machine-routable IP addresses. The efficiency of this translation process critically impacts the Quality of Experience (QoE) for end-users. Empirical studies of web performance show that DNS resolution time is a non-trivial component of the initial connection phase, and that the choice of recursive resolver influences not only lookup latency but also the downstream Content Delivery Network (CDN) edge server assigned to the client [1], [2].
+In the context of Indonesia's network infrastructure, users typically rely on a default local ISP resolver or manually configure a global public resolver employing Anycast routing, such as Cloudflare (1.1.1.1), Google (8.8.8.8), or Quad9 (9.9.9.9). A widely-held assumption is that local ISP infrastructure provides superior physical latency for domestic domains (e.g., .id or .co.id) due to closer geographical and topological proximity, while global Anycast resolvers provide stronger reliability and caching for international domains [2], [4]. However, Anycast efficiency depends heavily on local peering and routing policy [4], and regional measurement studies in Southeast Asia indicate that resolver performance and availability vary substantially over time and geography [6]. Whether the assumed local-versus-global trade-off actually holds for Indonesian end-users is therefore an open empirical question.
+A second, frequently overlooked dimension is resolution reliability: a resolver that answers quickly but intermittently fails to return a valid record degrades user experience as severely as a slow one. Measurements of public resolvers report meaningful differences in both response time and availability across providers [7], [8]. Consequently, optimising DNS performance is not a single-objective latency problem but a joint problem of latency and resolution success.
+Because consumer operating systems mandate a single static DNS configuration, a user cannot adapt the resolver to the query at hand. This research proposes that applying a lightweight Machine Learning classifier at the client level — selecting a resolver per query from structural features of the requested hostname — can, in principle, dispatch each query to a resolver that is both fast and reliable. We do not assume this will succeed; we build the mechanism and a measurement framework capable of confirming or refuting it.
+
+1.2 Problem Formulation (Rumusan Masalah)
+Based on the background above, this research addresses the following questions:
+1. How can a client-side system intercept DNS queries and dynamically select a recursive resolver in real-time without introducing measurable per-query overhead?
+2. Can a lightweight Machine Learning model, trained on structural hostname features and historical per-resolver telemetry, predict a resolver that improves resolution latency and/or resolution success relative to a static configuration?
+3. To what extent does ML-based hybrid routing improve the co-primary outcomes (resolution success rate and resolution latency) compared to (a) a static local-ISP resolver and (b) the best static Anycast resolver, in an Indonesian network environment?
+
+1.3 Research Objectives (Tujuan Penelitian)
+The primary objectives of this research are to:
+1. Develop a functional local DNS proxy capable of intercepting domain lookups and forwarding them to a dynamically selected upstream resolver, with the predictive model compiled to native code so that inference overhead is negligible relative to network latency.
+2. Implement a telemetry pipeline and train a lightweight Random Forest classifier that maps hostname features to a resolver choice, using a noise-resistant labelling scheme that prefers reliably-successful resolvers rather than chasing per-probe latency minima.
+3. Analyse and compare, on held-out queries, the resolution success rate and latency achieved by the ML-hybrid policy against static (ISP and Anycast), random, and oracle baselines, reporting effect sizes with confidence intervals.
+
+1.4 Significance of Research (Manfaat Penelitian)
+Theoretically, this study contributes to predictive network optimisation by examining whether low-overhead ML models can usefully inform protocol-level routing decisions [9], and by explicitly measuring resolution reliability alongside latency. Methodologically, it contributes a reproducible, open framework — telemetry collector, training pipeline, native-code routing engine, and an out-of-fold evaluation harness with oracle and random bounds — that allows the hybrid-routing hypothesis to be tested honestly rather than merely asserted. Practically, if the hypothesis holds, the framework offers Indonesian users a resolver-selection layer that improves both speed and reliability; if it does not, the same framework yields a clear, evidence-based recommendation for static configuration, which is itself a useful result.
+
+2.1 The Impact of DNS on Web Latency
+The correlation between DNS resolution time and user-perceived page-load delay is well documented. Longitudinal web-performance measurements show that DNS lookup time is a measurable component of page load and that it has evolved alongside CDN deployment [1]. The choice of recursive resolver is not trivial: because CDNs perform replica-server selection based on the resolver's network location, the resolver a client uses can determine which edge server — and therefore which network path and payload latency — the client is assigned [2]. DNS caching behaviour, governed by record Time-to-Live, further shapes the latency distribution and its long tail [3].
+
+2.2 Anycast Routing and Regional Performance Disparities
+Global public resolvers rely heavily on Anycast routing to direct queries to a topologically nearby instance. However, Anycast performance is governed by BGP routing policy and peering rather than raw geographic distance, so the nearest instance is not always selected, and the number of sites matters less than connectivity and routing [4]. In Southeast Asia specifically, historical measurements of root-server (F-Root) performance reveal substantial variation in latency and availability across countries and time, underscoring that regional conditions cannot be assumed from global averages [6]. This regional uncertainty is precisely what motivates an adaptive, measurement-driven approach for the Indonesian context.
+
+2.3 Resolver Choice, Reliability, and CDN Interplay
+Beyond latency, resolvers differ in availability and in how well they interact with CDNs. Comparative assessments of public resolvers report differences in both response time and reachability across providers and regions [7], [8], and show that the resolver–CDN interplay (cache-hit rates, client-to-edge mapping quality) materially affects end-to-end performance [7]. These findings justify treating resolution success rate as a co-primary outcome rather than a secondary concern, since an unreliable resolver imposes a latency penalty equivalent to a timeout whenever it fails.
+
+2.4 Predictive DNS and Prefetching Strategies
+To mitigate resolution delay, prior work has explored predictive methods such as DNS prefetching, which resolves likely-needed domains ahead of an explicit request [5]. While prefetching hides latency by issuing queries early, it does not optimise the routing path of the query itself, and it carries privacy implications [5]. This research builds on the idea of predictive analysis but applies prediction to resolver selection — choosing where a query is sent — rather than when it is issued.
+
+2.5 Machine Learning Applications in Network Routing
+The application of Machine Learning to networking has matured from traffic classification and anomaly detection toward resource allocation, path selection, and routing optimisation [9]. A recurring constraint for in-path tasks is that inference latency must be small relative to the latency being optimised. Computationally inexpensive models — decision trees and tree ensembles such as Random Forests — are therefore attractive for real-time network decisions, and can be compiled to native code to drive inference time toward the sub-millisecond range, ensuring a net-positive performance budget [9].
+
+
+BAB III: METHODOLOGY (METODOLOGI PENELITIAN)
+A. Research Design (Desain Penelitian)
+This study employs a quantitative experimental design focused on DNS performance optimisation. Experiments are conducted on bare-metal hardware over a wired LAN connection to eliminate the routing overhead and timing jitter introduced by virtual machines and by wireless links; this is a deliberate methodological requirement, as preliminary wireless measurements were found to be too noisy for reliable latency comparison. The design evaluates a client-side Machine Learning model that dynamically selects, per query, among four candidate recursive resolvers: a local ISP resolver and three global Anycast resolvers (Cloudflare 1.1.1.1, Google 8.8.8.8, Quad9 9.9.9.9). The experiment measures two co-primary dependent variables — resolution success rate and resolution latency (milliseconds) — for the predictive policy relative to static, random, and oracle baselines. To avoid drawing conclusions from data a model has already seen, all model decisions are evaluated out-of-fold (see §E).
+
+B. System Architecture (Arsitektur Sistem)
+The system is a decoupled two-part framework. Routing is performed without kernel-level modification by interposing a local DNS proxy.
+1. Telemetry and Training (Python): A telemetry collector probes each candidate resolver for each target domain and records, separately, whether the lookup succeeded and its latency. A training pipeline (scikit-learn) converts this telemetry into a Random Forest classifier and exports it.
+2. Real-time Engine (Go): A DNS proxy built on the Go miekg/dns library listens on the host's localhost interface (127.0.0.1) on a configurable UDP port (default 53, set in a shared config.json). The host operating system is configured to forward DNS queries to 127.0.0.1, routing application and browser traffic through the proxy. For each query, the engine extracts hostname features, evaluates the model, and forwards the binary DNS packet to the selected resolver, relaying the response to the client. The trained Random Forest is compiled to native Go source (via the m2cgen transpiler) and built into the proxy binary, so inference requires no subprocess, interpreter, or inter-process communication on the query path — keeping per-query overhead negligible relative to network RTT. On a forwarding error or unselectable resolver, the engine returns SERVFAIL so the client fails fast rather than hanging.
+A strict feature contract is maintained between the two halves: the Python pipeline and the Go engine compute each feature identically (identical definition and ordering), since any divergence would cause the served features to differ from those the model was trained on.
+
+C. Data Collection and Feature Extraction (Pengumpulan Data)
+A dataset of approximately 500 domestic (Indonesian) and international hostnames is assembled. For each domain, the telemetry collector queries every candidate resolver. To suppress measurement noise, each (domain, resolver) pair is probed multiple times and the median latency of the successful probes is retained, with success recorded as a separate boolean rather than encoded as a sentinel latency value; this prevents failures from contaminating latency statistics. To test the time-of-day hypothesis, collection is repeated across multiple hours of the day. From each hostname the following structural features are extracted as model inputs:
+- Global TLD indicator: whether the domain ends in a global TLD (.com/.net/.org).
+- Indonesian TLD indicator: whether the domain ends in .id.
+- Subdomain depth: the number of labels in the hostname (operationally, the number of dots), indicating structural complexity.
+- Hour of day: the integer hour at which the query occurs, capturing diurnal congestion effects.
+(Hostname string length was considered as a CDN/ad-host heuristic but excluded from the deployed feature set; it may be revisited in future work.)
+Rather than labelling each sample with the per-probe fastest resolver — a target dominated by noise, since the fastest of two near-equal resolvers flips frequently on repeat probes — samples are labelled with a noise-resistant rule: among the resolvers whose latency is within a tolerance of the row's best, the label is the resolver with the highest global success rate. This biases the model toward resolvers that are reliably good rather than incidentally fastest on a single probe.
+
+D. Machine Learning Model Configuration (Konfigurasi Model ML)
+The classifier is a Random Forest — a lightweight ensemble of shallow decision trees — implemented in scikit-learn. A tree ensemble is selected for its very low inference cost: for an in-path routing tool, inference time must be strictly smaller than the latency saved by a better route, and a compiled tree ensemble evaluates in sub-millisecond time, unlike deep models that would add unacceptable delay. The model is trained by supervised learning, with the extracted hostname features as the input vector X and the noise-resistant resolver label (one of four resolver classes) as the target y.
+The theoretical performance bounds frame the evaluation. The unbeatable lower bound on latency is the oracle, which for each query selects the truly best resolver in hindsight:
+    L_oracle(q) = min over r of L_r(q)
+The achievable hybrid policy instead pays the latency of whichever resolver the model selects, plus a negligible inference cost:
+    L_hybrid(q) = L_{model(q)}(q) + T_inference,  with T_inference << network RTT
+The research question is empirical: how close does L_hybrid come to L_oracle, and does it improve upon the best static policy L_static = L_r(q) for a fixed r — jointly on latency and on resolution success?
+
+E. Evaluation Metrics and Protocol (Skenario Pengujian)
+The hybrid mechanism is benchmarked against five policies on the same query set: Static ISP (the local resolver), Static Anycast (each of Cloudflare, Google, and Quad9), Random selection (a lower bound), the ML Hybrid policy, and the Oracle (an upper bound). Evaluation uses stratified K-fold cross-validation: the model is trained on K−1 folds and used to route the held-out fold, so every query is decided by a model that never trained on it. The reported outcomes are:
+- Resolution success rate (co-primary): the fraction of queries returning a valid record. Higher is better.
+- Effective latency (co-primary): per-query latency in which a failed query is charged a fixed timeout penalty, so that speed and reliability are combined into one cost. Reported as the mean and as the 50th, 95th, and 99th percentiles, the upper percentiles capturing the long-tail timeouts that dominate poor QoE.
+- Mean latency over successful queries: raw speed, ignoring failures.
+- Regret versus oracle: the mean gap between a policy's effective latency and the oracle's, quantifying how much performance each policy leaves unrealised.
+To distinguish real improvement from measurement noise, the difference between the ML Hybrid policy and the best static baseline (on both success rate and effective latency) is reported with a bootstrap 95% confidence interval; an interval that excludes zero indicates a statistically meaningful effect. The research hypothesis is directional but falsifiable: the ML Hybrid policy will yield higher resolution success and/or lower effective latency than the best static baseline. Should the confidence intervals include zero, the study will report that a single well-chosen static resolver is sufficient — a negative result that the design is explicitly built to detect and report honestly.
+
+F. Preliminary Feasibility Observations (Observasi Pendahuluan)
+A small pilot run was conducted to validate the end-to-end framework (telemetry, training, and evaluation) and to motivate the co-primary treatment of reliability. These observations are preliminary and are not presented as findings: they were collected over a wireless link across a limited two-hour window and are therefore subject to the noise the definitive wired, multi-hour protocol is designed to remove. In the pilot, the local ISP resolver failed to resolve a substantial fraction of queries while the Anycast resolvers resolved the large majority, and the per-probe fastest resolver among the reliable providers was found to be unstable across repeat probes. These observations directly informed two design decisions: elevating resolution success to a co-primary outcome, and adopting the noise-resistant labelling scheme described in §C. The definitive experiment, conducted under the wired multi-hour protocol, will determine whether the hybrid policy provides a statistically significant improvement over the best static resolver.
+
+
+BAB IV: RESULTS AND DISCUSSION (HASIL DAN PEMBAHASAN)
+» Note to author: This chapter is a SKELETON. Every "—" is a placeholder to be filled from the output of `python3 analysis/evaluate.py` (which prints the table below and writes results/metrics.csv plus the three figures). Delete every line beginning with "»" before submission. Do not enter any number you did not measure.
+
+A. Experimental Setup (Pengaturan Eksperimen)
+The definitive evaluation was conducted on bare-metal hardware over a wired LAN connection. The data were collected on [— date range —], probing [— N —] domestic and international domains, with each (domain, resolver) pair probed [— P —] times (median retained), repeated across [— H —] distinct hours of the day to capture diurnal effects. The four candidate resolvers were the local ISP resolver (103.88.88.88), Cloudflare (1.1.1.1), Google (8.8.8.8), and Quad9 (9.9.9.9). The Random Forest comprised 15 shallow trees; all model decisions were produced out-of-fold via stratified K-fold cross-validation, and policy differences were assessed with 2,000-sample bootstrap 95% confidence intervals.
+» Fill the bracketed run parameters from your actual scan (date, N domains, P probes, H hours, hardware/ISP).
+
+B. Dataset Summary (Ringkasan Dataset)
+A total of [— N —] queries were collected. The per-resolver failure rate and the fraction of queries that failed on every resolver (an irreducible floor common to all policies) are summarised in Table IV-1.
+
+TABLE IV-1. PER-RESOLVER FAILURE RATE
+ Resolver               | Failure rate (%) | Median latency when OK (ms)
+ ISP (103.88.88.88)     |        —         |             —
+ Cloudflare (1.1.1.1)   |        —         |             —
+ Google (8.8.8.8)       |        —         |             —
+ Quad9 (9.9.9.9)        |        —         |             —
+ Queries failing on ALL resolvers: [— % —]
+» Source: the per-resolver failure lines and the "All-resolvers-fail" line printed by evaluate.py.
+
+C. Resolution Success Rate — Co-Primary Outcome 1 (Tingkat Keberhasilan Resolusi)
+Figure IV-1 [insert results/success_by_arm.png] reports the resolution success rate of each policy. [— Summarise which policies were most/least reliable, and by how many percentage points the ML Hybrid policy differed from the best and worst static resolvers. —]
+
+D. Resolution Latency — Co-Primary Outcome 2 (Latensi Resolusi)
+Table IV-2 reports the full policy comparison; Figure IV-2 [insert results/latency_cdf.png] shows the effective-latency distribution (CDF) per policy. "Effective latency" charges a failed query a fixed timeout penalty, combining speed and reliability into one cost; percentiles p95/p99 capture the long-tail timeouts most damaging to QoE.
+
+TABLE IV-2. ROUTING-POLICY COMPARISON ON HELD-OUT QUERIES
+ Policy                 | Success % | Mean eff. (ms) | p50 (ms) | p95 (ms) | p99 (ms) | Mean OK (ms) | Regret (ms)
+ Static ISP (.88)       |     —     |       —        |    —     |    —     |    —     |      —       |     —
+ Static Cloudflare      |     —     |       —        |    —     |    —     |    —     |      —       |     —
+ Static Google          |     —     |       —        |    —     |    —     |    —     |      —       |     —
+ Static Quad9           |     —     |       —        |    —     |    —     |    —     |      —       |     —
+ Random (lower bound)   |     —     |       —        |    —     |    —     |    —     |      —       |     —
+ ML Hybrid              |     —     |       —        |    —     |    —     |    —     |      —       |     —
+ Oracle (upper bound)   |     —     |       —        |    —     |    —     |    —     |      —       |    0.00
+» Source: paste the table evaluate.py prints (columns map 1:1). The Oracle's regret is 0 by definition.
+
+E. Statistical Significance: ML Hybrid vs. Best Static (Uji Signifikansi)
+The best static baseline by mean effective latency was [— Static X —]. The bootstrap 95% confidence interval for the ML-Hybrid-minus-best-static difference was [—, —] percentage points for success rate and [—, —] ms for mean effective latency. Because [— at least one interval excludes / both intervals include —] zero, we [— reject / fail to reject —] the null hypothesis that ML routing performs equivalently to the best single static resolver.
+» This conditional sentence works for either outcome — keep only the branch your CI supports, and report the actual interval bounds from evaluate.py's "ML hybrid vs best static baseline" block.
+
+F. Model Signal and Feature Importance (Sinyal Model dan Kepentingan Fitur)
+The K-fold cross-validated classification accuracy was [— % —], against a no-skill majority-label floor of [— % —]. [— State whether the model exceeded the floor, i.e. whether the structural features carried learnable routing signal. —] Figure IV-3 [insert results/feature_importance.png] and Table IV-3 report the relative importance of each feature.
+
+TABLE IV-3. FEATURE IMPORTANCE (GINI)
+ Feature          | Importance
+ is_global_tld    |     —
+ is_id_tld        |     —
+ subdomain_depth  |     —
+ hour             |     —
+» Note any caveat the data warrants (e.g. if few hours were sampled, the "hour" importance is not generalisable).
+
+G. Discussion (Pembahasan)
+This section interprets the results against the hypothesis (§1.2). Three points should be addressed explicitly:
+1. Hypothesis outcome. [— State whether ML hybrid routing improved either co-primary outcome over the best static baseline beyond the confidence interval, and therefore whether the hypothesis is supported, partially supported, or refuted. —]
+2. The oracle gap. The difference between the Oracle and the best static policy quantifies the performance that smart routing could in principle capture. [— Report this gap and state how much of it the ML Hybrid policy realised. If the gap is large but unrealised, argue whether this reflects an absence of signal in the chosen features rather than a deficiency of the model. —]
+3. Reliability vs. latency. [— Discuss which of the two co-primary outcomes drove the result, relating it to the per-resolver failure rates in Table IV-1 and to prior findings on resolver availability [7], [8]. —]
+
+
+BAB V: CONCLUSION AND RECOMMENDATIONS (KESIMPULAN DAN SARAN)
+A. Conclusion (Kesimpulan)
+This study developed a hybrid DNS resolver-selection framework and evaluated whether machine-learning-based per-query routing improves resolution latency and success over static configuration in an Indonesian network setting. With respect to the research questions of §1.2: [— RQ1: state whether real-time per-query selection was achieved without measurable overhead. RQ2/RQ3: state, with the measured effect sizes and confidence intervals, whether the ML policy improved the co-primary outcomes over static ISP and over the best static Anycast resolver. —] The principal conclusion is that [— one-sentence evidence-based takeaway, positive or negative —].
+
+B. Limitations (Keterbatasan)
+The study is subject to the following limitations: a single client vantage point and ISP; a domain list of fixed size and composition; measurements bounded to the collection window; and a feature set restricted to static structural attributes of the hostname plus hour of day. [— Add any limitation specific to your run. —]
+
+C. Future Work (Saran / Penelitian Selanjutnya)
+The oracle analysis indicates that the principal path to improvement is richer, live features that are causally linked to per-query performance — for example, an exponentially-weighted moving average of each resolver's recent latency and a recent-failure indicator — rather than additional static hostname attributes. Further directions include collection from multiple vantage points and ISPs across Indonesia, extension to encrypted transports (DoH/DoT), and online adaptation of the model as network conditions drift.
+
+
+DAFTAR PUSTAKA (REFERENCES)
+[1] A. S. Asrese, S. J. Eravuchira, V. Bajpai, P. Sarolahti, and J. Ott, "Measuring Web Latency and Rendering Performance: Method, Tools, and Longitudinal Dataset," IEEE Transactions on Network and Service Management, vol. 16, no. 2, pp. 535–549, 2019, doi: 10.1109/TNSM.2019.2896710.
+[2] J. S. Otto, M. A. Sánchez, J. P. Rula, and F. E. Bustamante, "Content Delivery and the Natural Evolution of DNS: Remote DNS Trends, Performance Issues and Alternative Solutions," in Proc. ACM Internet Measurement Conference (IMC), 2012, doi: 10.1145/2398776.2398831.
+[3] G. C. M. Moura, J. Heidemann, R. de O. Schmidt, and W. Hardaker, "Cache Me If You Can: Effects of DNS Time-to-Live," in Proc. ACM Internet Measurement Conference (IMC), 2019, doi: 10.1145/3355369.3355568.
+[4] R. de O. Schmidt, J. Heidemann, and J. H. Kuipers, "Anycast Latency: How Many Sites Are Enough?," in Proc. Passive and Active Measurement (PAM), 2017, doi: 10.1007/978-3-319-54328-4_14.
+[5] S. Krishnan and F. Monrose, "DNS Prefetching and Its Privacy Implications: When Good Things Go Bad," in Proc. 3rd USENIX Workshop on Large-Scale Exploits and Emergent Threats (LEET), 2010.
+[6] J. Zhu and C. Qi, "Unravelling DNS Performance: A Historical Examination of F-ROOT in Southeast Asia," arXiv:2311.16545, 2023.
+[7] N. Kernan, J. Li, R. Al-Dalky, and M. Rabinovich, "Public DNS Resolvers Meet Content Delivery Networks: A Performance Assessment of the Interplay," arXiv:2502.05763, 2025.
+[8] R. Sharma and N. Feamster, "Measuring the Availability and Response Times of Public Encrypted DNS Resolvers," arXiv:2208.04999, 2022.
+[9] R. Boutaba, M. A. Salahuddin, N. Limam, S. Ayoubi, N. Shahriar, F. Estrada-Solano, and O. M. Caicedo, "A Comprehensive Survey on Machine Learning for Networking: Evolution, Applications and Research Opportunities," Journal of Internet Services and Applications, vol. 9, no. 16, 2018, doi: 10.1186/s13174-018-0087-2.
