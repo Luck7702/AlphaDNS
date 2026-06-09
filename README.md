@@ -73,6 +73,11 @@ Two decoupled halves:
 
 ## 🚀 Workflow: Scan → Train → **Evaluate** → Deploy
 
+> **Prefer a GUI?** `python3 gui/app.py` opens a desktop app (standard-library
+> Tkinter, no extra deps) to edit resolvers/domains, run a **watchable** scan,
+> and view the data summary + full evaluation. It's a thin front-end over the
+> same modules below — identical data and analysis, nothing re-implemented.
+
 ### Phase 1 — Collect telemetry
 ```bash
 python3 telemetry/scanner.py --probes 3
@@ -124,6 +129,8 @@ AlphaDNS/
 ├── analysis/
 │   └── evaluate.py          # policy comparison harness  ← the research deliverable
 ├── results/                 # metrics.csv + plots (generated)
+├── gui/                     # Tkinter desktop app (stdlib) — edit/scan/evaluate
+│   └── app.py               # run: python3 gui/app.py
 └── engine/
     ├── main.go              # DNS proxy: feature extraction, forwarding, SERVFAIL
     ├── predictor.go         # packs features → calls the compiled scorer

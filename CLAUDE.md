@@ -71,9 +71,14 @@ crossed tree split boundaries at X.5. Don't reintroduce them.
 - `analysis/evaluate.py` — the deliverable. Out-of-fold CV comparison of all
   routing policies + bootstrap CIs + plots. Run this to (dis)prove the thesis.
 - `ml/trainer.py` — trains, reports honest signal vs majority floor, exports Go.
-- `telemetry/scanner.py` — multi-probe (median) telemetry collector.
+- `telemetry/scanner.py` — multi-probe (median) telemetry collector. `run_scan`
+  is the shared concurrency engine (CLI `main()` and the GUI both call it);
+  `probe_header` defines the CSV schema in one place. Don't duplicate either.
 - `engine/` — Go DNS proxy. `main.go` (proxy + features + SERVFAIL),
   `predictor.go` (feature packing), `rf_model.go` (generated, gitignored).
+- `gui/` — Tkinter desktop front-end (stdlib only). A thin presentation layer:
+  it imports `dataset` / `scanner` / `evaluate` and computes no features,
+  success, latency or metrics itself. `app.py` is the entry point.
 
 ## Running things
 
@@ -83,6 +88,7 @@ python3 telemetry/scanner.py --probes 3  # collect (needs dnspython + network)
 python3 analysis/evaluate.py             # evaluate (needs only the CSV)
 python3 ml/trainer.py                    # train + export (Go export needs m2cgen)
 cd engine && go build && ./hybrid-dns    # run the proxy
+python3 gui/app.py                       # desktop GUI: edit/scan/evaluate (stdlib Tkinter)
 ```
 
 - `analysis/evaluate.py` and `ml/trainer.py` run on the **existing CSV** with no
@@ -98,3 +104,8 @@ cd engine && go build && ./hybrid-dns    # run the proxy
 - `go build` in `engine/` drops a `hybrid-dns` binary; don't commit it.
 - The bundled `raw_probes.csv` was collected over WiFi and fluctuates; treat its
   absolute latencies cautiously. Prefer a wired re-scan for any latency claim.
+- **Never append a scan onto a `raw_probes.csv` written with a different schema or
+  resolver set.** The scanner writes the header only when the file is empty, so a
+  schema change silently appends mismatched rows; `pandas` then refuses the whole
+  file ("Expected N fields … saw M") and `evaluate.py`/`trainer.py`/the GUI all
+  break. When the schema or resolver map changes, start a fresh file.
