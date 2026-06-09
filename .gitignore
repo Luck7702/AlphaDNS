@@ -3,6 +3,7 @@ __pycache__/
 
 dns_env/
 venv/
+.venv/
 .env
 
 *.csv
