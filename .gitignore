@@ -19,7 +19,8 @@ engine/alphadns_bin
 *.mod
 *.sum
 
-/data/domains.csv
+# domains.csv is the curated input list, not generated, so keep it tracked
+!/data/domains.csv
 /data/raw_probes.csv
 
 /engine/alphadns_bin
